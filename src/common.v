@@ -7,16 +7,16 @@ import encoding.binary
 import time
 
 pub enum ClientState {
-	connect_token_expired = -6
-	invalid_connect_token = -5
-	connection_timed_out  = -4
+	connect_token_expired         = -6
+	invalid_connect_token         = -5
+	connection_timed_out          = -4
 	connection_response_timed_out = -3
-	connection_request_timed_out = -2
-	connection_denied = -1
-	disconnected = 0
-	sending_connection_request = 1
-	sending_connection_response = 2
-	connected = 3
+	connection_request_timed_out  = -2
+	connection_denied             = -1
+	disconnected                  = 0
+	sending_connection_request    = 1
+	sending_connection_response   = 2
+	connected                     = 3
 }
 
 fn encrypt_xaead(message []u8, additional []u8, nonce []u8, key []u8) ![]u8 {
@@ -63,7 +63,7 @@ fn decrypt_xaead(message []u8, additional []u8, nonce []u8, key []u8) ![]u8 {
 
 fn encrypt_aead(message []u8, additional []u8, nonce []u8, key []u8) ![]u8 {
 	assert key.len == 32
-	assert nonce.len == 24
+	assert nonce.len == 12
 
 	encrypted_len_raw := u64(message.len) +
 		u64(libsodium.crypto_aead_chacha20poly1305_ietf_abytes())
@@ -87,7 +87,7 @@ fn encrypt_aead(message []u8, additional []u8, nonce []u8, key []u8) ![]u8 {
 
 fn decrypt_aead(message []u8, additional []u8, nonce []u8, key []u8) ![]u8 {
 	assert key.len == 32
-	assert nonce.len == 24
+	assert nonce.len == 12
 
 	mut decrypted := []u8{len: message.len}
 
@@ -146,7 +146,9 @@ pub fn (mut pt PrivateToken) encode(exp i64, protocol_id u64, nonce []u8, key []
 	mut assoc := []u8{len: 16}
 	binary.little_endian_put_u64(mut assoc, u64(exp))
 	binary.little_endian_put_u64_end(mut assoc, protocol_id)
-	return base64.encode(encrypt_xaead(json2.encode(pt).bytes(), assoc, nonce, key) or { return err })
+	return base64.encode(encrypt_xaead(json2.encode(pt).bytes(), assoc, nonce, key) or {
+		return err
+	})
 }
 
 pub fn PrivateToken.decode(exp i64, protocol_id u64, nonce []u8, key []u8, pt string) !PrivateToken {
