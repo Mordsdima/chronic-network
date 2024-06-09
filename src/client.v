@@ -50,6 +50,37 @@ fn (mut client Client) generate_ad(prefix u8) []u8 {
 	return buf
 }
 
+fn (mut client Client) generate_hdr(ptype u8, flags u8, seq u64) []u8 {
+	mut buf := []u8{}
+	buf << ptype
+	buf << flags
+	buf << leb128.encode_u64(seq)
+	return buf
+}
+
+// Encrypts packet if required and returns ready for send packet
+fn (mut client Client) create_packet(hdr []u8, data []u8) ![]u8 {
+	// second byte is flags, so we need to read, if encrypted then encrypt the packet
+	mut pkt := hdr.clone()
+	if (hdr[1] & flags_encrypted) != 0 {
+		// Encrypted
+		pkt << encrypt_aead(data, client.generate_ad(hdr[0]), client.generate_nonce(client.lseq),
+			client.c2s_key)!
+	} else {
+		pkt << data // then just add unencrypted data to packet
+	}
+
+	return pkt
+}
+
+fn (mut client Client) send_packet(ptype u8, flags u8, data []u8) ! {
+	buf := client.create_packet(client.generate_hdr(ptype, flags, client.lseq), data)!
+	client.lseq += 1
+
+	// Reliability is not ready yet ok
+	client.socket.write(buf)!
+}
+
 fn (mut client Client) recv_packet() !([]u8, []u8) {
 	mut buf := []u8{len: 2048}
 	nplen, npfrom := client.socket.read(mut buf)!
@@ -57,15 +88,18 @@ fn (mut client Client) recv_packet() !([]u8, []u8) {
 	buf.trim(nplen)
 
 	rseq, rseql := leb128.decode_u64(buf[2..])
-
 	if rseq < client.rseq {
 		println('Too late received packet!')
 	}
 
 	hdr := buf[..(2 + rseql)].clone()
 
-	buf = decrypt_aead(buf[(2 + rseql)..], client.generate_ad(buf[0]), client.generate_nonce(rseq),
-		client.s2c_key)!
+	if (hdr[1] & flags_encrypted) != 0 {
+		buf = decrypt_aead(buf[(2 + rseql)..], client.generate_ad(buf[0]), client.generate_nonce(rseq),
+			client.s2c_key)!
+	} else {
+		buf = buf[(2 + rseql)..]
+	}
 
 	return hdr, buf
 }
@@ -79,18 +113,15 @@ pub fn (mut client Client) try_connect(pt PublicToken) ! {
 			return error('Failed to connect')
 		}
 
-		mut pkt := []u8{}
-		pkt << u8(0)
-		pkt << u8(1 << 0)
-		unsafe { pkt.grow_len(16) }
-		binary.little_endian_put_u64_at(mut pkt, pt.protocol_id, 2)
-		binary.little_endian_put_u64_end(mut pkt, u64(pt.exp))
-		pkt << base64.decode(pt.nonce)
-		pkt << leb128.encode_u64(u64(pt.private.len))
-		pkt << pt.private.bytes()
+		mut data := []u8{}
+		unsafe { data.grow_len(16) }
+		binary.little_endian_put_u64_at(mut data, pt.protocol_id, 0)
+		binary.little_endian_put_u64_end(mut data, u64(pt.exp))
+		data << base64.decode(pt.nonce)
+		data << leb128.encode_u64(u64(pt.private.len))
+		data << pt.private.bytes()
 
-		client.socket.write(pkt)!
-		client.lseq += 1
+		client.send_packet(request_ptype, flags_reliable, data)!
 
 		time.sleep(500000000) // wait 500 ms, if still no packet received (when server enabled) then you have 2g connection or idk
 
@@ -101,16 +132,7 @@ pub fn (mut client Client) try_connect(pt PublicToken) ! {
 
 		// Valid packet
 
-		pkt = []u8{}
-		pkt << u8(3)
-		pkt << u8(1 << 0)
-		pkt << leb128.encode_u64(client.lseq)
-
-		pkt << encrypt_aead(buf, client.generate_ad(0x03), client.generate_nonce(client.lseq),
-			client.c2s_key)!
-
-		client.lseq += 1
-		client.socket.write(pkt)!
+		client.send_packet(response_ptype, flags_encrypted | flags_reliable, buf)!
 
 		// Now wait a new packet
 		if pt.timeout == -1 {
@@ -123,9 +145,9 @@ pub fn (mut client Client) try_connect(pt PublicToken) ! {
 			}
 		}
 
-		if hdr[0] == 1 {
+		if hdr[0] == 0x01 {
 			return error('Connection denied. Maybe invalid token?')
-		} else if hdr[0] == 4 {
+		} else if hdr[0] == 0x04 {
 			client.state = .connected // We connected!
 			return
 		}

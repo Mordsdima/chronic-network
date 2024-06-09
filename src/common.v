@@ -19,6 +19,19 @@ pub enum ClientState {
 	connected                     = 3
 }
 
+pub const request_ptype = 0
+pub const denied_ptype = 1
+pub const challenge_ptype = 2
+pub const response_ptype = 3
+pub const keepalive_ptype = 4
+pub const payload_ptype = 5
+pub const disconnect_ptype = 6
+pub const ack_ptype = 7
+
+pub const flags_reliable = 1 << 0
+pub const flags_sequenced = 1 << 1
+pub const flags_encrypted = 1 << 2
+
 fn encrypt_xaead(message []u8, additional []u8, nonce []u8, key []u8) ![]u8 {
 	assert key.len == 32
 	assert nonce.len == 24
