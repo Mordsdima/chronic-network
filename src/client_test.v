@@ -11,4 +11,9 @@ pub fn test_client() {
 
 	mut client := cn.Client{}
 	client.init(token)!
+
+	for {
+		client.update()!
+		client.send(cn.flags_reliable, []u8{})!
+	}
 }

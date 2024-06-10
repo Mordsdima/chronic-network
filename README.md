@@ -6,5 +6,5 @@ but you can also use in your projects; Have fun :P
 
  - [x] Simplier internal send packet
  - [x] Encryption
- - [ ] Real realibility
+ - [x] Real realibility (basic)
  - [ ] Sequencing (order)

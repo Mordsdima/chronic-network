@@ -8,13 +8,17 @@ import time
 
 pub struct Client {
 pub mut:
-	socket      &net.UdpConn = unsafe { nil }
-	state       ClientState  = .disconnected
-	lseq        u64
-	rseq        u64
-	s2c_key     []u8 // Base64 encoded Server-To-Client key
-	c2s_key     []u8 // Base64 encoded Client-To-Server key
-	protocol_id u64
+	socket             &net.UdpConn = unsafe { nil }
+	state              ClientState  = .disconnected
+	lseq               u64
+	rseq               u64
+	s2c_key            []u8 // Base64 encoded Server-To-Client key
+	c2s_key            []u8 // Base64 encoded Client-To-Server key
+	protocol_id        u64
+	payload_handler    ClientPayloadHandler = unsafe { nil }
+	connect_handler    ClientConnectHandler = unsafe { nil }
+	disconnect_handler ClientDisconnectHandler = unsafe { nil }
+	packet_cache       map[u64][]u8
 }
 
 pub fn (mut client Client) init(token string) ! {
@@ -74,7 +78,7 @@ fn (mut client Client) create_packet(hdr []u8, data []u8) ![]u8 {
 }
 
 fn (mut client Client) send_packet(ptype u8, flags u8, data []u8) ! {
-	buf := client.create_packet(client.generate_hdr(ptype, flags, client.lseq), data)!
+	buf := client.create_packet(client.generate_hdr(ptype, flags | flags_encrypted, client.lseq), data)!
 	client.lseq += 1
 
 	// Reliability is not ready yet ok
@@ -83,7 +87,7 @@ fn (mut client Client) send_packet(ptype u8, flags u8, data []u8) ! {
 
 fn (mut client Client) recv_packet() !([]u8, []u8) {
 	mut buf := []u8{len: 2048}
-	nplen, npfrom := client.socket.read(mut buf)!
+	nplen, _ := client.socket.read(mut buf)!
 
 	buf.trim(nplen)
 
@@ -98,10 +102,48 @@ fn (mut client Client) recv_packet() !([]u8, []u8) {
 		buf = decrypt_aead(buf[(2 + rseql)..], client.generate_ad(buf[0]), client.generate_nonce(rseq),
 			client.s2c_key)!
 	} else {
-		buf = buf[(2 + rseql)..]
+		buf = buf[(2 + rseql)..].clone()
 	}
 
+	if rseq < client.rseq && (buf[1] & flags_reliable) != 0 {
+		println('${rseq} < ${client.rseq}')
+		mut missed_seq := []u64{}
+
+		for seq in rseq .. client.rseq {
+			missed_seq << seq
+		}
+
+		for seq in missed_seq {
+			client.send_packet(nack_ptype, 0, leb128.encode_u64(seq))!
+			println('NACKed: ${seq}')
+		}
+	}
+
+	// ACK it if reliable
+
 	return hdr, buf
+}
+
+pub fn (mut client Client) update() ! {
+	hdr, buf := client.recv_packet() or { return }
+
+	if hdr[0] == ping_ptype {
+		client.send_packet(pong_ptype, 0, []u8{})!
+	} else if hdr[0] == payload_ptype {
+		rseq, _ := leb128.decode_u64(hdr[2..])
+		client.send_packet(ack_ptype, 0, leb128.encode_u64(rseq))!
+	} else if hdr[0] == nack_ptype {
+		seq, _ := leb128.decode_u64(buf)
+		client.socket.write(client.packet_cache[seq])!
+	} else if hdr[0] == ack_ptype {
+		// + миска риса и кошкожена
+		seq, _ := leb128.decode_u64(buf)
+		client.packet_cache.delete(seq)
+	}
+}
+
+pub fn (mut client Client) send(flags u8, data []u8) ! {
+	client.send_packet(payload_ptype, flags | flags_encrypted, data)!
 }
 
 pub fn (mut client Client) try_connect(pt PublicToken) ! {
@@ -121,7 +163,7 @@ pub fn (mut client Client) try_connect(pt PublicToken) ! {
 		data << leb128.encode_u64(u64(pt.private.len))
 		data << pt.private.bytes()
 
-		client.send_packet(request_ptype, flags_reliable, data)!
+		client.send_packet(request_ptype, 0, data)!
 
 		time.sleep(500000000) // wait 500 ms, if still no packet received (when server enabled) then you have 2g connection or idk
 
@@ -132,7 +174,7 @@ pub fn (mut client Client) try_connect(pt PublicToken) ! {
 
 		// Valid packet
 
-		client.send_packet(response_ptype, flags_encrypted | flags_reliable, buf)!
+		client.send_packet(response_ptype, flags_encrypted, buf)!
 
 		// Now wait a new packet
 		if pt.timeout == -1 {
@@ -145,9 +187,9 @@ pub fn (mut client Client) try_connect(pt PublicToken) ! {
 			}
 		}
 
-		if hdr[0] == 0x01 {
+		if hdr[0] == denied_ptype {
 			return error('Connection denied. Maybe invalid token?')
-		} else if hdr[0] == 0x04 {
+		} else if hdr[0] == connected_ptype {
 			client.state = .connected // We connected!
 			return
 		}
