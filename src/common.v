@@ -22,7 +22,8 @@ pub enum ClientState {
 pub enum DisconnectReason {
 	timeout               = 0
 	manually_disconnected = 1
-	internal_error        = 2
+	remote_disconnect     = 2
+	internal_error        = 3
 }
 
 pub const request_ptype = 0

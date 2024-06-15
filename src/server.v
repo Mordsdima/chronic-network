@@ -48,6 +48,7 @@ mut:
 pub fn (mut server Server) init(bind_addr string) ! {
 	server.socket = net.listen_udp(bind_addr)!
 	net.set_blocking(server.socket.sock.handle, false)!
+	server.socket.set_read_timeout(time.microsecond * 500)
 	server.challenge_token_key = generate_random(32)
 }
 
@@ -102,8 +103,8 @@ fn (mut server Server) send_packet(ptype u8, flags u8, mut client SClient, data 
 
 pub fn (mut server Server) update() ! {
 	np, mut npdata, npfrom := server.recv_new_packets()!
-
 	if np {
+		mut client := (server.clients[npfrom.str()] or { SClient{} })
 		// cool we have new packets!
 		if npdata[0] == request_ptype {
 			// Its "Connection Request Packet", next byte will be always reliable but not sequenced (1 << 0)
@@ -111,6 +112,7 @@ pub fn (mut server Server) update() ! {
 
 			pid := binary.little_endian_u64_at(npdata, 2 + rseql)
 			if pid != server.protocol_id {
+				println(pid)
 				println('Uh oh, client tried to connect with invalid protocol ID')
 				return
 			}
@@ -147,7 +149,7 @@ pub fn (mut server Server) update() ! {
 
 			server.challenge_token_seq += 1
 
-			mut client := (server.clients[npfrom.str()] or { panic('wtff') })
+			client = (server.clients[npfrom.str()] or { panic('wtff') })
 
 			mut cht := ChallengeToken{
 				client_id: pp.client_id
@@ -174,7 +176,7 @@ pub fn (mut server Server) update() ! {
 				return
 			}
 
-			mut client := (server.clients[npfrom.str()] or { panic('wtff') })
+			//mut client := (server.clients[npfrom.str()] or { panic('wtff') })
 
 			// Cool, lets verify encrypted challenge token
 			_, rseql := leb128.decode_u64(npdata[2..])
@@ -216,17 +218,17 @@ pub fn (mut server Server) update() ! {
 			server.send_packet(connected_ptype, flags_reliable, mut client, []u8{})!
 			println('New connection!')
 		} else if npdata[0] == pong_ptype {
-			mut client := (server.clients[npfrom.str()] or { panic('wtff') })
+			//mut client := (server.clients[npfrom.str()] or { panic('wtff') })
 			client.ptimeout = time.now().add(time.second * 9)
 			server.clients[npfrom.str()] = client
 		} else if npdata[0] == payload_ptype {
 		} else if npdata[0] == nack_ptype {
-			mut client := (server.clients[npfrom.str()] or { panic('wtff') })
+			//mut client := (server.clients[npfrom.str()] or { panic('wtff') })
 			_, rseql := leb128.decode_u64(npdata[2..])
 			seq, _ := leb128.decode_u64(npdata[(2 + rseql)..])
 			server.socket.write_to(client.addr, client.packet_cache[seq])!
 		} else if npdata[0] == ack_ptype {
-			mut client := (server.clients[npfrom.str()] or { panic('wtff') })
+			
 			_, rseql := leb128.decode_u64(npdata[2..])
 			// delete from cache
 			seq, _ := leb128.decode_u64(npdata[(2 + rseql)..])

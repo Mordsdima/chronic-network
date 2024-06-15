@@ -2,6 +2,7 @@ module main
 
 import os
 import chronic_network as cn
+import time
 
 pub fn test_client() {
 	token := os.input('Enter your token please: ')

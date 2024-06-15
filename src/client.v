@@ -19,6 +19,7 @@ pub mut:
 	connect_handler    ClientConnectHandler = unsafe { nil }
 	disconnect_handler ClientDisconnectHandler = unsafe { nil }
 	packet_cache       map[u64][]u8
+	ptimeout     time.Time
 }
 
 pub fn (mut client Client) init(token string) ! {
@@ -30,11 +31,18 @@ pub fn (mut client Client) init(token string) ! {
 	for server in pt.server_addresses {
 		client.socket = net.dial_udp(server)! // ok
 		net.set_blocking(client.socket.sock.handle, false)!
+		client.socket.set_read_timeout(time.microsecond * 500)
 		client.try_connect(pt) or {
 			println(err)
 			continue
 		}
 		if client.state == .connected {
+			client.ptimeout = time.now().add(time.second * 9)
+			// firing event
+			if client.connect_handler != unsafe { nil } {
+				client.connect_handler()
+			}
+			
 			return
 		}
 	}
@@ -78,7 +86,7 @@ fn (mut client Client) create_packet(hdr []u8, data []u8) ![]u8 {
 }
 
 fn (mut client Client) send_packet(ptype u8, flags u8, data []u8) ! {
-	buf := client.create_packet(client.generate_hdr(ptype, flags | flags_encrypted, client.lseq), data)!
+	buf := client.create_packet(client.generate_hdr(ptype, flags, client.lseq), data)!
 	client.lseq += 1
 
 	// Reliability is not ready yet ok
@@ -125,16 +133,39 @@ fn (mut client Client) recv_packet() !([]u8, []u8) {
 }
 
 pub fn (mut client Client) update() ! {
+	if client.state != .connected { return }
+
+	if client.ptimeout < time.now() {
+		println('Timed out.')
+		client.state = .disconnected
+		client.send_packet(disconnect_ptype, 0, []u8{})!
+		if client.disconnect_handler != unsafe { nil } {
+			client.disconnect_handler(DisconnectReason.timeout)!
+		}
+	}
+
+
 	hdr, buf := client.recv_packet() or { return }
 
 	if hdr[0] == ping_ptype {
+		client.ptimeout = time.now().add(time.second * 9)
 		client.send_packet(pong_ptype, 0, []u8{})!
 	} else if hdr[0] == payload_ptype {
 		rseq, _ := leb128.decode_u64(hdr[2..])
 		client.send_packet(ack_ptype, 0, leb128.encode_u64(rseq))!
+		// process it
+		if client.payload_handler != unsafe { nil } {
+			client.payload_handler(hdr[1], buf)!
+		}
 	} else if hdr[0] == nack_ptype {
 		seq, _ := leb128.decode_u64(buf)
 		client.socket.write(client.packet_cache[seq])!
+	} else if hdr[0] == disconnect_ptype {
+		// Server disconnect
+		client.state = .disconnected
+		if client.disconnect_handler != unsafe { nil } {
+			client.disconnect_handler(DisconnectReason.remote_disconnect)!
+		}
 	} else if hdr[0] == ack_ptype {
 		// + миска риса и кошкожена
 		seq, _ := leb128.decode_u64(buf)
@@ -143,6 +174,7 @@ pub fn (mut client Client) update() ! {
 }
 
 pub fn (mut client Client) send(flags u8, data []u8) ! {
+	if client.state != .connected { return }
 	client.send_packet(payload_ptype, flags | flags_encrypted, data)!
 }
 
