@@ -1,4 +1,4 @@
-module chronic_network
+module cn
 
 import libsodium
 import x.json2

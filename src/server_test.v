@@ -1,6 +1,6 @@
 module main
 
-import chronic_network as cn
+import cn
 import time
 
 fn test_server() {

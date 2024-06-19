@@ -1,4 +1,4 @@
-module chronic_network
+module cn
 
 import net
 import encoding.binary

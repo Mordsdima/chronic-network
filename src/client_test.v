@@ -1,7 +1,7 @@
 module main
 
 import os
-import chronic_network as cn
+import cn
 import time
 
 pub fn test_client() {
