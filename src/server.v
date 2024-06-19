@@ -226,9 +226,9 @@ pub fn (mut server Server) update() ! {
 			server.clients[npfrom.str()] = client
 		} else if npdata[0] == payload_ptype {
 			_, rseql := leb128.decode_u64(npdata[2..])
-			data := npdata[(2 + rseql)..]
+			data := npdata[(2 + rseql)..].clone()
 			if server.payload_handler != unsafe { nil } {
-				server.payload_handler(data, client)!
+				server.payload_handler(npdata[1], data, client)!
 			}
 		} else if npdata[0] == nack_ptype {
 			//mut client := (server.clients[npfrom.str()] or { panic('wtff') })

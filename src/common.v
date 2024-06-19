@@ -42,9 +42,9 @@ pub const flags_reliable = 1 << 0
 pub const flags_sequenced = 1 << 1
 pub const flags_encrypted = 1 << 2
 
-pub type ClientPayloadHandler = fn ([]u8) !
+pub type ClientPayloadHandler = fn (u8, []u8) !
 
-pub type ServerPayloadHandler = fn ([]u8, SClient) !
+pub type ServerPayloadHandler = fn (u8, []u8, SClient) !
 
 pub type ClientConnectHandler = fn () !
 
