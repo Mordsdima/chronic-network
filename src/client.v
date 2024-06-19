@@ -40,7 +40,7 @@ pub fn (mut client Client) init(token string) ! {
 			client.ptimeout = time.now().add(time.second * 9)
 			// firing event
 			if client.connect_handler != unsafe { nil } {
-				client.connect_handler()
+				client.connect_handler()!
 			}
 			
 			return

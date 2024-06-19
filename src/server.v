@@ -216,12 +216,20 @@ pub fn (mut server Server) update() ! {
 			client.ptimeout = time.now().add(time.second * 9) // set initial timeout
 			server.clients[npfrom.str()] = client
 			server.send_packet(connected_ptype, flags_reliable, mut client, []u8{})!
+			if server.connect_handler != unsafe { nil } {
+				server.connect_handler(client)!
+			}
 			println('New connection!')
 		} else if npdata[0] == pong_ptype {
 			//mut client := (server.clients[npfrom.str()] or { panic('wtff') })
 			client.ptimeout = time.now().add(time.second * 9)
 			server.clients[npfrom.str()] = client
 		} else if npdata[0] == payload_ptype {
+			_, rseql := leb128.decode_u64(npdata[2..])
+			data := npdata[(2 + rseql)..]
+			if server.payload_handler != unsafe { nil } {
+				server.payload_handler(data, client)!
+			}
 		} else if npdata[0] == nack_ptype {
 			//mut client := (server.clients[npfrom.str()] or { panic('wtff') })
 			_, rseql := leb128.decode_u64(npdata[2..])
@@ -251,6 +259,9 @@ pub fn (mut server Server) update() ! {
 				println('Timed out.')
 				server.send_packet(disconnect_ptype, 0, mut client, []u8{})!
 				server.clients.delete(ip)
+				if server.disconnect_handler != unsafe { nil } {
+					server.disconnect_handler(client, DisconnectReason.timeout)!
+				}
 				continue
 			}
 
