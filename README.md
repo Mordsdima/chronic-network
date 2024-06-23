@@ -8,3 +8,4 @@ but you can also use in your projects; Have fun :P
  - [x] Encryption
  - [x] Real realibility (basic)
  - [ ] Sequencing (order)
+ - [ ] Use [eventbus](https://modules.vlang.io/eventbus.html) instead of struct properties

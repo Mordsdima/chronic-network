@@ -31,7 +31,7 @@ pub fn (mut client Client) init(token string) ! {
 	for server in pt.server_addresses {
 		client.socket = net.dial_udp(server)! // ok
 		net.set_blocking(client.socket.sock.handle, false)!
-		client.socket.set_read_timeout(time.microsecond * 500)
+		//client.socket.set_read_timeout(time.microsecond * 500)
 		client.try_connect(pt) or {
 			println(err)
 			continue
@@ -197,7 +197,7 @@ pub fn (mut client Client) try_connect(pt PublicToken) ! {
 
 		client.send_packet(request_ptype, 0, data)!
 
-		time.sleep(500000000) // wait 500 ms, if still no packet received (when server enabled) then you have 2g connection or idk
+		client.socket.set_read_timeout(time.second) // wait 1s, if still no packet received (when server enabled) then you have 2g connection or idk
 
 		mut hdr, mut buf := client.recv_packet() or {
 			attempts += 1
@@ -211,7 +211,14 @@ pub fn (mut client Client) try_connect(pt PublicToken) ! {
 		// Now wait a new packet
 		if pt.timeout == -1 {
 			// still wait 100 ms
-			time.sleep(100000000)
+			client.socket.set_read_timeout(time.millisecond * 100)
+
+			hdr, buf = client.recv_packet() or {
+				attempts += 1
+				continue
+			}
+		} else {
+			client.socket.set_read_timeout(pt.timeout * time.second)
 
 			hdr, buf = client.recv_packet() or {
 				attempts += 1
@@ -222,6 +229,7 @@ pub fn (mut client Client) try_connect(pt PublicToken) ! {
 		if hdr[0] == denied_ptype {
 			return error('Connection denied. Maybe invalid token?')
 		} else if hdr[0] == connected_ptype {
+			client.socket.set_read_timeout(time.microsecond * 500)
 			client.state = .connected // We connected!
 			return
 		}
