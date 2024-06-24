@@ -42,18 +42,6 @@ pub const flags_reliable = 1 << 0
 pub const flags_sequenced = 1 << 1
 pub const flags_encrypted = 1 << 2
 
-pub type ClientPayloadHandler = fn (u8, []u8) !
-
-pub type ServerPayloadHandler = fn (u8, []u8, SClient) !
-
-pub type ClientConnectHandler = fn () !
-
-pub type ServerConnectHandler = fn (SClient) !
-
-pub type ClientDisconnectHandler = fn (DisconnectReason) !
-
-pub type ServerDisconnectHandler = fn (SClient, DisconnectReason) !
-
 fn encrypt_xaead(message []u8, additional []u8, nonce []u8, key []u8) ![]u8 {
 	assert key.len == 32
 	assert nonce.len == 24
@@ -251,6 +239,8 @@ pub fn generate_public_token(params GenerateToken) !string {
 	return public_token.encode()
 }
 
-fn init() {
-	// assert libsodium.sodium_init() >= 0
+pub struct IncomingPacket {
+pub:
+	flags u8
+	buf []u8
 }

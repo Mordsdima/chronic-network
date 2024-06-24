@@ -222,9 +222,6 @@ pub fn (mut server Server) update() ! {
 				server.eb.publish("connect", unsafe { nil }, &client)
 			}
 			
-			/*if server.connect_handler != unsafe { nil } {
-				server.connect_handler(client)!
-			}*/
 			println('New connection!')
 		} else if npdata[0] == pong_ptype {
 			// mut client := (server.clients[npfrom.str()] or { panic('wtff') })
@@ -235,14 +232,11 @@ pub fn (mut server Server) update() ! {
 			data := npdata[(2 + rseql)..].clone()
 			flags := npdata[1]
 			if server.eb.subscriber.is_subscribed("payload") {
-				server.eb.publish("payload", &{
-					"flags": &flags,
-					"buf": &data
+				server.eb.publish("payload", IncomingPacket{
+					flags: flags,
+					buf: data
 				}, &client)
 			}
-			/*if server.payload_handler != unsafe { nil } {
-				server.payload_handler(npdata[1], data, client)!
-			}*/
 		} else if npdata[0] == nack_ptype {
 			// mut client := (server.clients[npfrom.str()] or { panic('wtff') })
 			_, rseql := leb128.decode_u64(npdata[2..])

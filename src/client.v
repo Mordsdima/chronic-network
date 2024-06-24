@@ -16,9 +16,6 @@ pub mut:
 	s2c_key            []u8 // Base64 encoded Server-To-Client key
 	c2s_key            []u8 // Base64 encoded Client-To-Server key
 	protocol_id        u64
-	payload_handler    ClientPayloadHandler    = unsafe { nil }
-	connect_handler    ClientConnectHandler    = unsafe { nil }
-	disconnect_handler ClientDisconnectHandler = unsafe { nil }
 	packet_cache       map[u64][]u8
 	ptimeout           time.Time
 	eb                 eventbus.EventBus[string]
@@ -159,9 +156,9 @@ pub fn (mut client Client) update() ! {
 		client.send_packet(ack_ptype, 0, leb128.encode_u64(rseq))!
 		// process it
 		if client.eb.subscriber.is_subscribed("payload") {
-			client.eb.publish("payload", &{
-				"flags": &hdr[1],
-				"buf": &buf
+			client.eb.publish("payload", IncomingPacket{
+				flags: hdr[1],
+				buf: buf
 			}, &client)
 		}
 	} else if hdr[0] == nack_ptype {
