@@ -1,10 +1,11 @@
 module cn
 
 import net
+import time
+import eventbus
 import encoding.binary
 import encoding.leb128
 import encoding.base64
-import time
 
 struct LazyPacket {
 pub:
@@ -25,10 +26,12 @@ pub mut:
 	addr         net.Addr
 	s2c_key      []u8   // Base64 encoded Server-To-Client key
 	c2s_key      []u8   // Base64 encoded Client-To-Server key
-	user_data    string // Anything but should be string, for example you can save json here as base64
+	user_data    string // Anything but should be string
 	packet_cache map[u64][]u8
+	server &Server = unsafe { nil }
 }
 
+@[heap]
 pub struct Server {
 pub mut:
 	challenge_token_seq u64
@@ -38,9 +41,7 @@ pub mut:
 	key                 []u8
 	max_clients         u64
 	cur_clients         u64
-	payload_handler     ServerPayloadHandler = unsafe { nil }
-	connect_handler     ServerConnectHandler = unsafe { nil }
-	disconnect_handler  ServerDisconnectHandler = unsafe { nil }
+	eb                  eventbus.EventBus[string]
 mut:
 	clients map[string]SClient
 }
@@ -50,6 +51,7 @@ pub fn (mut server Server) init(bind_addr string) ! {
 	net.set_blocking(server.socket.sock.handle, false)!
 	server.socket.set_read_timeout(time.microsecond * 500)
 	server.challenge_token_key = generate_random(32)
+	server.eb = eventbus.new[string]()
 }
 
 fn (mut server Server) generate_nonce(seq u64) []u8 {
@@ -145,6 +147,7 @@ pub fn (mut server Server) update() ! {
 				rseq: 1
 				addr: npfrom
 				client_id: pp.client_id
+				server: &server
 			}
 
 			server.challenge_token_seq += 1
@@ -167,8 +170,7 @@ pub fn (mut server Server) update() ! {
 
 			data << (encrypt_aead(cht.encode().bytes(), []u8{}, buf, server.challenge_token_key)!)
 
-			server.send_packet(challenge_ptype, flags_reliable, mut
-				client, data)!
+			server.send_packet(challenge_ptype, flags_reliable, mut client, data)!
 		} else if npdata[0] == response_ptype {
 			if !((npdata[1] & flags_encrypted) != 0) {
 				println('Connection Response Packet is not a encrypted one! Here is flags: ' +
@@ -176,7 +178,7 @@ pub fn (mut server Server) update() ! {
 				return
 			}
 
-			//mut client := (server.clients[npfrom.str()] or { panic('wtff') })
+			// mut client := (server.clients[npfrom.str()] or { panic('wtff') })
 
 			// Cool, lets verify encrypted challenge token
 			_, rseql := leb128.decode_u64(npdata[2..])
@@ -216,27 +218,37 @@ pub fn (mut server Server) update() ! {
 			client.ptimeout = time.now().add(time.second * 9) // set initial timeout
 			server.clients[npfrom.str()] = client
 			server.send_packet(connected_ptype, flags_reliable, mut client, []u8{})!
-			if server.connect_handler != unsafe { nil } {
-				server.connect_handler(client)!
+			if server.eb.subscriber.is_subscribed("connect") {
+				server.eb.publish("connect", unsafe { nil }, &client)
 			}
+			
+			/*if server.connect_handler != unsafe { nil } {
+				server.connect_handler(client)!
+			}*/
 			println('New connection!')
 		} else if npdata[0] == pong_ptype {
-			//mut client := (server.clients[npfrom.str()] or { panic('wtff') })
+			// mut client := (server.clients[npfrom.str()] or { panic('wtff') })
 			client.ptimeout = time.now().add(time.second * 9)
 			server.clients[npfrom.str()] = client
 		} else if npdata[0] == payload_ptype {
 			_, rseql := leb128.decode_u64(npdata[2..])
 			data := npdata[(2 + rseql)..].clone()
-			if server.payload_handler != unsafe { nil } {
-				server.payload_handler(npdata[1], data, client)!
+			flags := npdata[1]
+			if server.eb.subscriber.is_subscribed("payload") {
+				server.eb.publish("payload", &{
+					"flags": &flags,
+					"buf": &data
+				}, &client)
 			}
+			/*if server.payload_handler != unsafe { nil } {
+				server.payload_handler(npdata[1], data, client)!
+			}*/
 		} else if npdata[0] == nack_ptype {
-			//mut client := (server.clients[npfrom.str()] or { panic('wtff') })
+			// mut client := (server.clients[npfrom.str()] or { panic('wtff') })
 			_, rseql := leb128.decode_u64(npdata[2..])
 			seq, _ := leb128.decode_u64(npdata[(2 + rseql)..])
 			server.socket.write_to(client.addr, client.packet_cache[seq])!
 		} else if npdata[0] == ack_ptype {
-			
 			_, rseql := leb128.decode_u64(npdata[2..])
 			// delete from cache
 			seq, _ := leb128.decode_u64(npdata[(2 + rseql)..])
@@ -259,8 +271,8 @@ pub fn (mut server Server) update() ! {
 				println('Timed out.')
 				server.send_packet(disconnect_ptype, 0, mut client, []u8{})!
 				server.clients.delete(ip)
-				if server.disconnect_handler != unsafe { nil } {
-					server.disconnect_handler(client, DisconnectReason.timeout)!
+				if server.eb.subscriber.is_subscribed("disconnect") {
+					server.eb.publish("disconnect", DisconnectReason.timeout, &client)
 				}
 				continue
 			}
@@ -279,10 +291,10 @@ pub fn (mut server Server) recv_new_packets() !(bool, []u8, net.Addr) {
 		successful = false
 		return successful, buf, net.Addr{}
 	}
-	defer { server.clients[from.str()].rseq += 1 }
+	defer { (server.clients[from.str()] or { SClient{} }).rseq += 1 }
 	buf.trim(readed)
 	if (buf[1] & flags_encrypted) != 0 && from.str() in server.clients {
-		mut client := server.clients[from.str()]
+		mut client := server.clients[from.str()]  or { SClient{} }
 		rseq, rseql := leb128.decode_u64(buf[2..])
 
 		if rseq > client.rseq {

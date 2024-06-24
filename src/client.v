@@ -1,10 +1,11 @@
 module cn
 
 import net
+import time
+import eventbus
 import encoding.base64
 import encoding.binary
 import encoding.leb128
-import time
 
 pub struct Client {
 pub mut:
@@ -15,11 +16,12 @@ pub mut:
 	s2c_key            []u8 // Base64 encoded Server-To-Client key
 	c2s_key            []u8 // Base64 encoded Client-To-Server key
 	protocol_id        u64
-	payload_handler    ClientPayloadHandler = unsafe { nil }
-	connect_handler    ClientConnectHandler = unsafe { nil }
+	payload_handler    ClientPayloadHandler    = unsafe { nil }
+	connect_handler    ClientConnectHandler    = unsafe { nil }
 	disconnect_handler ClientDisconnectHandler = unsafe { nil }
 	packet_cache       map[u64][]u8
-	ptimeout     time.Time
+	ptimeout           time.Time
+	eb                 eventbus.EventBus[string]
 }
 
 pub fn (mut client Client) init(token string) ! {
@@ -27,11 +29,12 @@ pub fn (mut client Client) init(token string) ! {
 
 	client.c2s_key = base64.decode(pt.c2s_key)
 	client.s2c_key = base64.decode(pt.s2c_key)
+	client.eb = eventbus.new[string]()
 	client.protocol_id = pt.protocol_id
 	for server in pt.server_addresses {
 		client.socket = net.dial_udp(server)! // ok
 		net.set_blocking(client.socket.sock.handle, false)!
-		//client.socket.set_read_timeout(time.microsecond * 500)
+		// client.socket.set_read_timeout(time.microsecond * 500)
 		client.try_connect(pt) or {
 			println(err)
 			continue
@@ -39,10 +42,10 @@ pub fn (mut client Client) init(token string) ! {
 		if client.state == .connected {
 			client.ptimeout = time.now().add(time.second * 9)
 			// firing event
-			if client.connect_handler != unsafe { nil } {
-				client.connect_handler()!
+			if client.eb.subscriber.is_subscribed("connect") {
+				client.eb.publish("connect", unsafe { nil }, &client)
 			}
-			
+
 			return
 		}
 	}
@@ -133,17 +136,18 @@ fn (mut client Client) recv_packet() !([]u8, []u8) {
 }
 
 pub fn (mut client Client) update() ! {
-	if client.state != .connected { return }
+	if client.state != .connected {
+		return
+	}
 
 	if client.ptimeout < time.now() {
 		println('Timed out.')
 		client.state = .disconnected
 		client.send_packet(disconnect_ptype, 0, []u8{})!
-		if client.disconnect_handler != unsafe { nil } {
-			client.disconnect_handler(DisconnectReason.timeout)!
+		if client.eb.subscriber.is_subscribed("disconnect") {
+			client.eb.publish("disconnect", DisconnectReason.timeout, &client)
 		}
 	}
-
 
 	hdr, buf := client.recv_packet() or { return }
 
@@ -154,8 +158,11 @@ pub fn (mut client Client) update() ! {
 		rseq, _ := leb128.decode_u64(hdr[2..])
 		client.send_packet(ack_ptype, 0, leb128.encode_u64(rseq))!
 		// process it
-		if client.payload_handler != unsafe { nil } {
-			client.payload_handler(hdr[1], buf)!
+		if client.eb.subscriber.is_subscribed("payload") {
+			client.eb.publish("payload", &{
+				"flags": &hdr[1],
+				"buf": &buf
+			}, &client)
 		}
 	} else if hdr[0] == nack_ptype {
 		seq, _ := leb128.decode_u64(buf)
@@ -163,8 +170,8 @@ pub fn (mut client Client) update() ! {
 	} else if hdr[0] == disconnect_ptype {
 		// Server disconnect
 		client.state = .disconnected
-		if client.disconnect_handler != unsafe { nil } {
-			client.disconnect_handler(DisconnectReason.remote_disconnect)!
+		if client.eb.subscriber.is_subscribed("disconnect") {
+			client.eb.publish("disconnect", DisconnectReason.remote_disconnect, &client)
 		}
 	} else if hdr[0] == ack_ptype {
 		// + миска риса и кошкожена
@@ -174,7 +181,9 @@ pub fn (mut client Client) update() ! {
 }
 
 pub fn (mut client Client) send(flags u8, data []u8) ! {
-	if client.state != .connected { return }
+	if client.state != .connected {
+		return
+	}
 	client.send_packet(payload_ptype, flags | flags_encrypted, data)!
 }
 

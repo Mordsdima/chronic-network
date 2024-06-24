@@ -2,7 +2,6 @@ module main
 
 import os
 import cn
-import time
 
 pub fn test_client() {
 	token := os.input('Enter your token please: ')
