@@ -41,7 +41,7 @@ pub mut:
 	key                 []u8
 	max_clients         u64
 	cur_clients         u64
-	eb                  eventbus.EventBus[string]
+	eb                  eventbus.EventBus[string] = eventbus.new[string]()
 mut:
 	clients map[string]SClient
 }
@@ -51,7 +51,6 @@ pub fn (mut server Server) init(bind_addr string) ! {
 	net.set_blocking(server.socket.sock.handle, false)!
 	server.socket.set_read_timeout(time.microsecond * 500)
 	server.challenge_token_key = generate_random(32)
-	server.eb = eventbus.new[string]()
 }
 
 fn (mut server Server) generate_nonce(seq u64) []u8 {
