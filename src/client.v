@@ -27,12 +27,13 @@ pub fn (mut client Client) init(token string) ! {
 	client.c2s_key = base64.decode(pt.c2s_key)
 	client.s2c_key = base64.decode(pt.s2c_key)
 	client.protocol_id = pt.protocol_id
+	mut last_error := error("none")
 	for server in pt.server_addresses {
 		client.socket = net.dial_udp(server)! // ok
 		net.set_blocking(client.socket.sock.handle, false)!
 		// client.socket.set_read_timeout(time.microsecond * 500)
 		client.try_connect(pt) or {
-			println(err)
+			last_error = err
 			continue
 		}
 		if client.state == .connected {
@@ -45,6 +46,9 @@ pub fn (mut client Client) init(token string) ! {
 			return
 		}
 	}
+	// If reached here its not connected correctly
+	return last_error
+
 }
 
 fn (mut client Client) generate_nonce(seq u64) []u8 {
